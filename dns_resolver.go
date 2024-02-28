@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 
@@ -66,17 +67,17 @@ func hasNs(response *dns.Msg) string {
 
 func resolve(hostname string) string {
 
-	// The first server to query is one of the 13 root servers
+	// The first server to query is one of the 13 root nameservers
 	serverIp := "198.41.0.4:53"
 
 	for {
 		response := dnsQuery(hostname, serverIp)
 		// Check in the Anwser section
-		if ipAdress := hasAnswer(response); ipAdress != "" {
-			return ipAdress
+		if ipAddress := hasAnswer(response); ipAddress != "" {
+			return ipAddress
 			// Check in the Additional section
-		} else if ipAdress := hasExtra(response); ipAdress != "" {
-			serverIp = ipAdress
+		} else if ipAddress := hasExtra(response); ipAddress != "" {
+			serverIp = ipAddress
 			continue
 			// Check in the Authoritative section
 		} else if domainName := hasNs(response); domainName != "" {
@@ -84,25 +85,43 @@ func resolve(hostname string) string {
 			continue
 		}
 
-		log.Fatal("Nothing found in the different sections...")
+		fmt.Println("Nothing found in the different sections... please check the format of the hostname")
+		return ""
 
 	}
 }
 
 func main() {
 
-	if len(os.Args) != 2 {
-		fmt.Println("Usage: ./dsn_resolver hostname")
-		return
+	c, err := net.ListenPacket("udp", "localhost:3000")
+	if err != nil {
+		log.Fatal(err)
 	}
+	fmt.Println("Starting udp server on localhost:3000")
 
-	hostname := os.Args[1]
+	defer c.Close()
 
-	// Fully qualified hostname
-	if !strings.HasSuffix(os.Args[1], ".") {
-		hostname = os.Args[1] + "."
+	for {
+		buffer := make([]byte, 1024)
+		n, addr, err := c.ReadFrom(buffer)
+		if err != nil {
+			fmt.Println("Error in reading:", err)
+			continue
+		}
+
+		hostname := string(buffer[:n])
+		fmt.Println("Query received:", hostname)
+		// Fully qualified hostname
+		if !strings.HasSuffix(hostname, ".") {
+			hostname = hostname + "."
+		}
+
+		ipAddr := resolve(hostname)
+		if ipAddr != "" {
+			fmt.Println("Sending IP address back...")
+			c.WriteTo([]byte(ipAddr), addr)
+		}
+
 	}
-
-	fmt.Println("The IP adress for", os.Args[1], "is:", resolve(hostname))
 
 }
