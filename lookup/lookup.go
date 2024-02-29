@@ -2,9 +2,33 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"os"
+	"strings"
+
+	"github.com/miekg/dns"
 )
+
+func dnsQuery(hostname string, ipAdress string) *dns.Msg {
+
+	m := new(dns.Msg)
+	//fmt.Println("Creating  message...")
+	m.SetQuestion(hostname, dns.TypeA)
+
+	c := new(dns.Client)
+	fmt.Println("Querying the server at", ipAdress, "for", hostname)
+	response, _, err := c.Exchange(m, ipAdress)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Ok answer received from", ipAdress)
+	// fmt.Println("Answer section: ", response.Answer)
+	// fmt.Println("Authoritative section: ", response.Ns)
+	// fmt.Println("Extra section: ", response.Extra)
+
+	return response
+}
 
 func main() {
 
@@ -13,29 +37,14 @@ func main() {
 		return
 	}
 
-	udpAddr, err := net.ResolveUDPAddr("udp", "localhost:3000")
-	if err != nil {
-		fmt.Println(err)
-		return
+	hostname := os.Args[1]
+	// Fully qualified hostname
+	if !strings.HasSuffix(hostname, ".") {
+		hostname = hostname + "."
 	}
 
-	c, err := net.DialUDP("udp", nil, udpAddr)
-	if err != nil {
-		fmt.Println("Listen failed:", err)
-	}
+	response := dnsQuery(hostname, "localhost:3000")
 
-	defer c.Close()
-
-	_, err = c.Write([]byte(os.Args[1]))
-	if err != nil {
-		fmt.Println("Error in writing:", err)
-	}
-
-	buffer := make([]byte, 1024)
-	n, err := c.Read(buffer)
-	if err != nil {
-		fmt.Println("Read failed:", err)
-	}
-	fmt.Println("The IP address for", os.Args[1], "is:", string(buffer[:n]))
+	fmt.Println("The IP address of", strings.TrimSuffix(hostname, "."), "is:", response.Answer[0].(*dns.A).A.String())
 
 }
