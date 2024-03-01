@@ -43,8 +43,9 @@ func main() {
 		hostname = hostname + "."
 	}
 
-	response := dnsQuery(hostname, "localhost:3000")
+	response := dnsQuery(hostname, "127.0.0.1:3000")
+	resolvedIp := response.Answer[0].(*dns.A).A.String()
 
-	fmt.Println("The IP address of", strings.TrimSuffix(hostname, "."), "is:", response.Answer[0].(*dns.A).A.String())
+	fmt.Println("The IP address of", strings.TrimSuffix(hostname, "."), "is:\n"+resolvedIp)
 
 }

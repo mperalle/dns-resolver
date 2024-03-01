@@ -8,14 +8,15 @@ import (
 	"github.com/miekg/dns"
 )
 
+var cache map[string]dns.RR
+
 func dnsQuery(hostname string, ipAdress string) *dns.Msg {
 
 	m := new(dns.Msg)
-	//fmt.Println("Creating  message...")
 	m.SetQuestion(hostname, dns.TypeA)
 
 	c := new(dns.Client)
-	fmt.Println("Querying the server at", ipAdress, "for", hostname)
+	fmt.Println("\nQuerying the server at", ipAdress, "for", hostname)
 	response, _, err := c.Exchange(m, ipAdress)
 	if err != nil {
 		fmt.Println(err)
@@ -23,54 +24,40 @@ func dnsQuery(hostname string, ipAdress string) *dns.Msg {
 	}
 
 	fmt.Println("Ok answer received from", ipAdress)
-	// fmt.Println("Answer section: ", response.Answer)
-	// fmt.Println("Authoritative section: ", response.Ns)
-	// fmt.Println("Extra section: ", response.Extra)
 
 	return response
 }
 
 func hasAnswer(response *dns.Msg) dns.RR {
 
-	if len(response.Answer) != 0 {
-		for _, record := range response.Answer {
-			if record.Header().Rrtype == dns.TypeA {
-				fmt.Println("Found A record from the final nameserver!")
-				return record
-			}
+	for _, record := range response.Answer {
+		if record.Header().Rrtype == dns.TypeA {
+			fmt.Println("Found A record from the nameserver!")
+			return record
 		}
 	}
-
 	fmt.Println("No A record in Answer section...")
 	return nil
 }
 
 func hasExtra(response *dns.Msg) string {
-
-	if len(response.Extra) != 0 {
-		for _, record := range response.Extra {
-			if record.Header().Rrtype == dns.TypeA {
-				fmt.Println("Found A record in Additional section, let's query its server...")
-				return record.(*dns.A).A.String() + ":53"
-			}
+	for _, record := range response.Extra {
+		if record.Header().Rrtype == dns.TypeA {
+			fmt.Println("Found A record in Additional section, let's query its nameserver:", record.Header().Name)
+			return record.(*dns.A).A.String() + ":53"
 		}
 	}
-
 	fmt.Println("No A record in Additional section...")
 	return ""
 }
 
 func hasNs(response *dns.Msg) string {
-
-	if len(response.Ns) != 0 {
-		for _, record := range response.Ns {
-			if record.Header().Rrtype == dns.TypeNS {
-				fmt.Println("Found domain name for NS record in Authoritative section, let's resolve it...")
-				return record.(*dns.NS).Ns
-			}
+	for _, record := range response.Ns {
+		if record.Header().Rrtype == dns.TypeNS {
+			fmt.Println("Found NS record in Authoritative section, let's resolve its domain name:", record.(*dns.NS).Ns)
+			return record.(*dns.NS).Ns
 		}
 	}
-
 	fmt.Println("No NS record in Authoritative section...")
 	return ""
 }
@@ -91,7 +78,7 @@ func resolve(hostname string) dns.RR {
 			continue
 			// Check in the Authoritative section
 		} else if domainName := hasNs(response); domainName != "" {
-			serverIp = resolve(domainName).Header().Name + ":53"
+			serverIp = resolve(domainName).(*dns.A).A.String() + ":53"
 			continue
 		}
 
@@ -102,18 +89,34 @@ func resolve(hostname string) dns.RR {
 }
 
 func dnsHandler(w dns.ResponseWriter, r *dns.Msg) {
-	fmt.Println("Message received:", r)
-	fmt.Println(r.MsgHdr)
+	fmt.Println("******************************************************************")
+	fmt.Println("\nNew message received from", w.RemoteAddr().String()+":")
+	fmt.Println(r)
+
+	hostname := r.Question[0].Name
+
+	var answer dns.RR
+
+	if record, inCache := cache[hostname]; inCache {
+		answer = record
+		fmt.Println("Found matching record in cache")
+	} else {
+		answer = resolve(hostname)
+		cache[hostname] = answer
+	}
+
 	m := new(dns.Msg)
 	m.Id = r.Id
-	anwser := resolve(r.Question[0].Name)
-	m.Answer = append(m.Answer, anwser)
+	m.Answer = append(m.Answer, answer)
 	w.WriteMsg(m)
-	fmt.Println("Answering back...")
+	fmt.Println("\nSending back A record:")
 	fmt.Println(m)
 }
 
 func main() {
+
+	// Initialize cache instance
+	cache = make(map[string]dns.RR)
 
 	fmt.Println("Listen and serve on localhost:3000")
 	err := dns.ListenAndServe("localhost:3000", "udp", dns.HandlerFunc(dnsHandler))
