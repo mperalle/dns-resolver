@@ -4,11 +4,17 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/miekg/dns"
 )
 
-var cache map[string]dns.RR
+type cachedRecord struct {
+	record     dns.RR
+	expiration time.Time
+}
+
+var cache map[string]cachedRecord
 
 func dnsQuery(hostname string, ipAdress string) *dns.Msg {
 
@@ -97,14 +103,51 @@ func dnsHandler(w dns.ResponseWriter, r *dns.Msg) {
 
 	var answer dns.RR
 
-	if record, inCache := cache[hostname]; inCache {
-		answer = record
+	if r, inCache := cache[hostname]; inCache && time.Now().Before(r.expiration) {
+		answer = r.record
 		fmt.Println("Found matching record in cache")
+
+	} else if inCache && time.Now().After(r.expiration) {
+
+		fmt.Println("Cached record expired! Removing it from the cache...")
+		delete(cache, hostname)
+
+		answer = resolve(hostname)
+
+		// Add record and expiration time to the cache
+		ttl := answer.Header().Ttl
+
+		fmt.Println("The TTL is:", ttl)
+
+		cache[hostname] = cachedRecord{
+			record:     answer,
+			expiration: time.Now().Add(time.Duration(ttl) * time.Second),
+		}
+
+		fmt.Println("The expiration time is:", cache[hostname].expiration)
+
+		fmt.Println("New record added to cache", cache)
+
 	} else {
 		answer = resolve(hostname)
-		cache[hostname] = answer
+
+		// Add record and expiration time to the cache
+		ttl := answer.Header().Ttl
+
+		fmt.Println("The TTL is:", ttl)
+
+		cache[hostname] = cachedRecord{
+			record:     answer,
+			expiration: time.Now().Add(time.Duration(ttl) * time.Second),
+		}
+
+		fmt.Println("The expiration time is:", cache[hostname].expiration)
+
+		fmt.Println("New record added to cache", cache)
+
 	}
 
+	// Prepare response to client
 	m := new(dns.Msg)
 	m.Id = r.Id
 	m.Answer = append(m.Answer, answer)
@@ -116,8 +159,9 @@ func dnsHandler(w dns.ResponseWriter, r *dns.Msg) {
 func main() {
 
 	// Initialize cache instance
-	cache = make(map[string]dns.RR)
+	cache = make(map[string]cachedRecord)
 
+	// Start dns server
 	fmt.Println("Listen and serve on localhost:3000")
 	err := dns.ListenAndServe("localhost:3000", "udp", dns.HandlerFunc(dnsHandler))
 	if err != nil {
